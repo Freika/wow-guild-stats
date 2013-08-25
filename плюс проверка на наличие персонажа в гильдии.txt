@@ -1,0 +1,258 @@
+<?php
+/*
+Plugin Name: WoW Guild Stats
+Plugin URI: http://example.com/wordpress-plugins/my-plugin
+Description: Описание плагина
+Version: 0.1
+Author: Evgeniy Burmakin
+Author URI: http://freika.ru/
+License: GPLv2
+*/
+
+//echo plugin_dir_path( __FILE__ );
+
+
+
+
+ 
+//Хук для активации плагина. Внутри функции может проверяться совместимость версии и/или устанавливаться какие-то служебные опции
+
+//__файл)__ - путь к вызываемому файлу, второе - имя функции, которая будет вызвана при активации плагина
+
+
+function wgs_install () {
+   global $wpdb;
+
+   $table_name = $wpdb->prefix . "wowguildstats";
+   if($wpdb->get_var("show tables like '$table_name'") != $table_name) {
+      
+      $sql = "CREATE TABLE " . $table_name . " (
+	  id mediumint(9) NOT NULL AUTO_INCREMENT,
+	  `realm` varchar(40) CHARACTER SET utf8 NOT NULL,
+	  `feasts_of_strength` int(10) NOT NULL,
+	  `respeck` int(10) NOT NULL,
+	  `needs` int(10) NOT NULL,
+	  `damage_sum` int(50) NOT NULL,
+	  `heal_sum` int(50) NOT NULL,
+	  `deaths_overall` int(10) NOT NULL,
+	  `deaths_pvp` int(10) NOT NULL,
+	  `quests_complete` int(10) NOT NULL,
+	  `dailys_complete` int(10) NOT NULL,
+	  `dungeons_complete` int(10) NOT NULL,
+	  `raids_10` int(10) NOT NULL,
+	  `raids_25` int(10) NOT NULL,
+	  `challenges_complete` int(10) NOT NULL,
+	  `flights_sum` int(10) NOT NULL,
+	  `hearthstone_sum` int(10) NOT NULL,
+	  `hugs_sum` int(10) NOT NULL,
+	  `pet_battles_won` int(10) NOT NULL,
+	  UNIQUE KEY id (id)
+	);";
+
+      require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+      dbDelta($sql);
+
+   }
+}
+
+register_activation_hook(__FILE__,'wgs_install');
+
+
+
+	
+
+
+add_action( 'plugins_loaded', 'frey_plugin_base_run' );
+
+function frey_plugin_base_run() {
+	/* добавляем действие */
+	add_action( 'wp_footer', 'frey_plugin_base_footer_text', 100); //Где выполняем, что выполняем, с каким приоритетом
+}
+
+function frey_plugin_base_footer_text() {
+	echo "Некоторый текст, который выведется в футере";
+}
+
+
+add_action( 'admin_menu', 'fpb_admin_settings_page' );
+function fpb_admin_settings_page() {
+add_options_page(
+'WoW Guild Stats', //название пункта в настройках
+'WoW Guild Stats',
+'manage_options',
+'wow-guild-stats',
+'wow_guild_stats_page'
+);
+}
+
+
+function wow_guild_stats_page() {
+global $wpdb;
+//Если указаны сервер и имя гильдии, то получаем список членов гильдии
+if(isset($_POST['realm']) && isset($_POST['guildname'])) {
+
+	$realm = $_POST['realm'];
+	$guildname = $_POST['guildname'];
+	$guildFields = "?fields=members";
+  	$armoryRequestUrl = 'http://eu.battle.net/api/wow/guild/'.$realm.'/'.$guildname.$guildFields;
+  	$result = file_get_contents($armoryRequestUrl, true);
+  	$roster = json_decode($result, true);
+	$members = $roster['members'];
+
+	//каждого найденного члена гильдии через цикл помещаем в базу данных
+	foreach($roster['members'] as $member) {
+	    $name = $member[character][name];
+	    $realm = $member[character][realm];
+	    $guild = $member[character][guild];
+		//проверяем, не содержится ли уже в персонаж в БД
+	    $result = mysql_query("SELECT `id` FROM `".$wpdb->prefix."wowguildstats` WHERE `name`='$name' and `realm`='$realm' and `guild` = '$guild'");
+		$myrow = mysql_fetch_array($result);		
+		if (!empty($myrow['id'])) {
+		echo "Извините, персонаж по имени ".$name." уже содержится в базе данных.<br>";
+		}
+		//Если нет, то заносим в БД и говорим об этом на странице
+		else {
+			$sql = $wpdb->query("INSERT INTO `".$wpdb->prefix."wowguildstats` SET `id` = NULL, `name` = '$name', `realm` = '$realm' and `guild` = '$guild'");
+	        if ($sql) {
+	    	echo "Участник гильдии ".$name." занесен в базу данных.<br>";
+	    }
+	    	else {
+	    		echo mysql_error();
+	    	}
+		}   
+    }
+}
+//Если была нажата кнопка "Обновить инфо", то обновляем список персонажей с уведомлениями
+ 	if (isset($_POST['refreshRoster']) && $_POST['refreshRoster'] == 'refresh') {
+	$guildFields = "?fields=members";
+
+	$realm = 'Eversong';
+	$guildname = 'КомКон';
+
+  	$armoryRequestUrl = 'http://eu.battle.net/api/wow/guild/'.$realm.'/'.$guildname.$guildFields;
+
+  	$result = file_get_contents($armoryRequestUrl, true);
+  	$roster = json_decode($result, true);
+  	$members = $roster['members'];
+
+  	foreach ($roster['members'] as $member) {
+	    $name = $member[character][name];
+	    $realm = $member[character][realm];
+	    $guild = $member[character][guild];
+  		$sql = mysql_query("SELECT * FROM `".$wpdb->prefix."wowguildstats` WHERE `name` = '$name' AND `realm` = '$realm' and `guild` = '$guild'");
+  		$result = mysql_fetch_assoc($sql);
+
+  		if ($name == $result['name'] && $realm == $result['realm'] && $guild == $result['guild']) {
+  			echo "<span style='color: green'>".$name." по-прежнему в гильдии</span><br>";
+  		}
+  		//!-- Здесь при включение объединенных серверов добавить проверку на то, на каком сервере игрок из гильдии --!
+  		elseif ($name !== $result['name'] && $realm !== $result['realm'] && $guild == $result['guild']) {
+  			echo "<span style='color: yellow'>Персонаж ".$name." вступил в гильдию и добавлен в базу данных.<br>";
+  		}
+  		elseif ($result['name'] !== $name and $result['realm'] !== $realm) {
+  			$sql = "DELETE FROM `".$wpdb->prefix."wowguildstats` WHERE `name` = '$result[name]' AND `realm` = '$result[realm]'";
+  			$query = mysql_query($sql);
+  			if ($query) {
+  				echo "<span style='color: red'>Персонаж ".$name." покинул гильдию и был удален из базы данных.<br>";
+  			}
+  			else {
+  				echo "<span style='color: red'>Персонаж ".$name." покинул гильдию, но не был удален из базы данных. Удалите все данные из базы данных и перезапросите их из Оружейной снова.<br>";
+  			}
+  		}
+  		//проверка на то, состоит ли персонаж в гильдии
+  		elseif ($result['name'] !== $name and $result['realm'] !== $realm and $result['guild'] !== $guild) {
+  			$sql = "DELETE FROM `".$wpdb->prefix."wowguildstats` WHERE `name` = '$result[name]' AND `realm` = '$result[realm]' and `guild` = '$result[guild]'";
+  			$query = mysql_query($sql);
+  			if ($query) {
+  				echo "<span style='color: red'>Персонаж ".$name." покинул гильдию и был удален из базы данных.<br>";
+  			}
+  			else {
+  				echo "<span style='color: red'>Персонаж ".$name." покинул гильдию, но не был удален из базы данных. Удалите все данные из базы данных и перезапросите их из Оружейной снова.<br>";
+  			}
+  		}
+  		else {
+  			echo "There is an error occure";
+  		}
+
+  	}
+} 
+//Получаем статы по всем персонажам.
+if (isset($_POST['getStats']) && $_POST['getStats'] == 'getStats') {
+	$guildFields = "?fields=members";
+
+	$realm = 'Eversong';
+	$guildname = 'КомКон';
+
+  	$armoryRequestUrl = 'http://eu.battle.net/api/wow/guild/'.$realm.'/'.$guildname.$guildFields;
+
+  	$result = file_get_contents($armoryRequestUrl, true);
+  	$roster = json_decode($result, true);
+  	$members = $roster['members'];
+
+  	foreach ($roster['members'] as $member) {
+	    $name = $member[character][name];
+	    $realm = $member[character][realm];
+	    $guild = $memer[character][guild];
+  		$sql = mysql_query("SELECT * FROM `".$wpdb->prefix."wowguildstats` WHERE `name` = '$name' AND `realm` = '$realm'");
+  		$result = mysql_fetch_assoc($sql);
+
+
+
+  	}
+}
+
+
+
+
+
+	?>
+	<form action="" method="POST">
+		<label for="realm">Сервер</label>
+		<br>
+		<input type="text" name="realm" id="realm" value="eversong">
+		<br>
+		<label for="guildname">Название гильдии</label>
+		<br>
+		<input type="text" text="" id="guildname" name="guildname" value="КомКон">
+		<br>
+		<button type="submit" id="getRoster" name="getRoster">Получить данные о гильдии</button>
+	</form>
+	<form action="" method="POST">
+		<button type="submit" name="refreshRoster" id="refreshRoster" value="refresh">Обновить информацию о составе гильдии</button>
+	</form>
+	<form action="" method="POST">
+		<button type="submit" name="getStats" id="getStats" value="getStats">Получить статистику по персонажам</button>
+	</form>
+
+
+
+
+	<?php
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//Деактивация плагина, по тому же принципу, что и активация
+register_deactivation_hook( __FILE__, 'frey_plugin_base_uninstall' );
+function frey_plugin_base_uninstall() {
+//do something
+	//Здесь можно-нужно удалить установленные при активации опции
+}
+
+?>
